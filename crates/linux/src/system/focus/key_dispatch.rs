@@ -41,6 +41,25 @@ struct LiveKeys<'a> {
     bus: &'a SharedBus,
 }
 
+/// Finds the window activated by the compositor when AT-SPI
+/// does not expose a focused top-level window.
+fn compositor_focused_window(
+    windows: &[WindowInfo],
+    deadline: Deadline,
+    mut active: impl FnMut(&WindowInfo, Deadline) -> Option<Result<bool, AdapterError>>,
+) -> Result<Option<WindowInfo>, AdapterError> {
+    for window in windows {
+        match active(window, deadline) {
+            Some(Ok(true)) => return Ok(Some(window.clone())),
+            Some(Ok(false)) => {}
+            Some(Err(error)) => return Err(error),
+            None => return Ok(None),
+        }
+    }
+
+    Ok(None)
+}
+
 impl KeyWorld for LiveKeys<'_> {
     fn lookup(&self, pid: u32) -> Lookup {
         process_facts::lookup(pid)
@@ -56,11 +75,16 @@ impl KeyWorld for LiveKeys<'_> {
         deadline: Deadline,
     ) -> Result<Option<WindowInfo>, AdapterError> {
         let (windows, read) = windows_of_process(self.bus, pid, deadline)?;
-        let focused = windows.into_iter().find(|window| window.state.is_focused);
-        if focused.is_none() {
-            require_complete_frames(read)?;
+
+        if let Some(focused) = windows.iter().find(|window| window.state.is_focused) {
+            return Ok(Some(focused.clone()));
         }
-        Ok(focused)
+
+        require_complete_frames(read)?;
+
+        compositor_focused_window(&windows, deadline, |window, deadline| {
+            self.compositor_active(window, deadline)
+        })
     }
 
     fn active_client_pid(&self, deadline: Deadline) -> Option<u32> {

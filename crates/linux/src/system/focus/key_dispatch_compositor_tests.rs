@@ -83,3 +83,30 @@ fn a_press_through_the_virtual_keyboard_is_labelled_with_it() {
     let result = press(&physical, &keys, InteractionPolicy::headless()).expect("sent");
     assert_eq!(result.steps[0].label(), "VirtualKeyboard.press_key");
 }
+
+#[test]
+fn compositor_activation_supplies_focus_when_atspi_has_no_focused_top_level() {
+    let windows = vec![window(PID, "background"), window(PID, "active")];
+
+    let focused = compositor_focused_window(&windows, deadline(), |candidate, _| {
+        Some(Ok(candidate.id == "active"))
+    })
+    .expect("compositor focus read");
+
+    assert_eq!(focused.map(|window| window.id), Some("active".to_owned()));
+}
+
+#[test]
+fn compositor_focus_fallback_fails_closed_without_activation_evidence() {
+    let windows = vec![window(PID, "target")];
+
+    let no_manager = compositor_focused_window(&windows, deadline(), |_, _| None)
+        .expect("missing compositor evidence");
+
+    assert!(no_manager.is_none());
+
+    let inactive = compositor_focused_window(&windows, deadline(), |_, _| Some(Ok(false)))
+        .expect("inactive window");
+
+    assert!(inactive.is_none());
+}

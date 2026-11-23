@@ -135,15 +135,21 @@ fn a_silent_handshake_releases_the_socket_before_returning() {
     let port = listener.local_addr().expect("address").port();
     let display = format!("127.0.0.1:{}", port - 6000);
     let (closed, observed) = channel();
+    let (handshake_started, started) = channel();
     let server = std::thread::spawn(move || {
         let (mut socket, _) = listener.accept().expect("accepted");
         socket
             .set_read_timeout(Some(Duration::from_secs(3)))
             .expect("timeout");
         let mut bytes = [0; 1024];
+        let mut handshake_observed = false;
         loop {
             match socket.read(&mut bytes) {
                 Ok(0) => break,
+                Ok(_) if !handshake_observed => {
+                    handshake_started.send(()).expect("handshake started");
+                    handshake_observed = true;
+                }
                 Ok(_) => {}
                 Err(error) => panic!("client did not close: {error}"),
             }
@@ -156,6 +162,9 @@ fn a_silent_handshake_releases_the_socket_before_returning() {
         let _ = ended.send(());
         answer.is_ok()
     });
+    started
+        .recv_timeout(Duration::from_secs(2))
+        .expect("client started X11 handshake");
     assert_eq!(pending.finish(deadline(150)), None);
     observed
         .recv_timeout(Duration::from_secs(2))
